@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # -------------------------------------------------------------
+  # 1. Open Policy Agent (OPA Engine)
+  # -------------------------------------------------------------
+  opa:
+    image: openpolicyagent/opa:latest
+    container_name: poc-opa
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--log-level=info"
+      - "/policies/policy.rego"
+    volumes:
+      - ./auth_service/policies:/policies:ro
+    ports:
+      - "8181:8181"
+    networks:
+      - agent-mesh
+
+  # -------------------------------------------------------------
+  # 2. FastAPI Guardrail & OPA Orchestrator (ext_authz target)
+  # -------------------------------------------------------------
+  auth_service:
+    build:
+      context: .
+      dockerfile: auth_service/Dockerfile
+    container_name: poc-auth-service
+    environment:
+      - OPA_URL=http://opa:8181/v1/data/bofa/agent/authz
+    ports:
+      - "8000:8000"
+    depends_on:
+      - opa
+    networks:
+      - agent-mesh
+
+  # -------------------------------------------------------------
+  # 3. Upstream Platform & External Services (LLM & MCP Tools)
+  # -------------------------------------------------------------
+  upstream_service:
+    build:
+      context: .
+      dockerfile: upstream_service/Dockerfile
+    container_name: poc-upstream-service
+    ports:
+      - "8080:8080"
+    networks:
+      - agent-mesh
+
+  # -------------------------------------------------------------
+  # 4. Envoy Proxy Sidecar (Intercepts all Agent traffic)
+  # -------------------------------------------------------------
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    container_name: poc-envoy
+    volumes:
+      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+    ports:
+      - "10000:10000"
+      - "9901:9901"
+    depends_on:
+      - auth_service
+      - upstream_service
+    networks:
+      - agent-mesh
+
+networks:
+  agent-mesh:
+    driver: bridge

@@ -1,0 +1,51 @@
+{{- if .Values.tenantAgent.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-mesh-authz.fullname" . }}-tenant-agent
+  labels:
+    {{- include "agent-mesh-authz.labels" . | nindent 4 }}
+    app: {{ .Values.tenantAgent.name }}
+spec:
+  replicas: {{ .Values.tenantAgent.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.tenantAgent.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.tenantAgent.name }}
+      annotations:
+        {{- if .Values.tenantAgent.consul.inject }}
+        # 1. Enable Consul Envoy Sidecar Injection
+        consul.hashicorp.com/connect-inject: "true"
+        consul.hashicorp.com/connect-service: "{{ .Values.tenantAgent.consul.serviceName }}"
+        
+        # 2. Configure Upstream routing via Envoy sidecar (localhost:8080)
+        consul.hashicorp.com/connect-service-upstreams: "{{ .Values.upstreamService.name }}:8080"
+        {{- end }}
+    spec:
+      containers:
+        # AI Agent Runtime Container
+        - name: agent-runtime
+          image: "{{ .Values.tenantAgent.image.repository }}:{{ .Values.tenantAgent.image.tag }}"
+          imagePullPolicy: {{ .Values.tenantAgent.image.pullPolicy }}
+          command:
+            - "sh"
+            - "-c"
+            - "pip install httpx && python -c 'import time; print(\"AI Agent running...\"); time.sleep(3600)'"
+          env:
+            - name: AGENT_ID
+              value: "{{ .Values.tenantAgent.agentId }}"
+            - name: TENANT_ID
+              value: "{{ .Values.tenantAgent.tenantId }}"
+            - name: UPSTREAM_GATEWAY_URL
+              value: "http://localhost:8080"
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+{{- end }}

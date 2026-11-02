@@ -1,0 +1,31 @@
+{{- if .Values.consulCRDs.enabled }}
+# ---------------------------------------------------------------------------
+# Service Intentions: Allows Agent -> Upstream & Agent -> Auth Service
+# ---------------------------------------------------------------------------
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceIntentions
+metadata:
+  name: {{ .Values.upstreamService.name }}-intentions
+  labels:
+    {{- include "agent-mesh-authz.labels" . | nindent 4 }}
+spec:
+  destination:
+    name: {{ .Values.upstreamService.name }}
+  sources:
+    - name: {{ .Values.tenantAgent.name }}
+      action: allow
+
+---
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceIntentions
+metadata:
+  name: {{ .Values.authService.name }}-intentions
+  labels:
+    {{- include "agent-mesh-authz.labels" . | nindent 4 }}
+spec:
+  destination:
+    name: {{ .Values.authService.name }}
+  sources:
+    - name: {{ .Values.tenantAgent.name }}
+      action: allow
+{{- end }}

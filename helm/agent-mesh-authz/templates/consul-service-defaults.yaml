@@ -1,0 +1,55 @@
+{{- if .Values.consulCRDs.enabled }}
+# ---------------------------------------------------------------------------
+# 1. ServiceDefaults for Upstream: Registers protocol as HTTP
+# ---------------------------------------------------------------------------
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceDefaults
+metadata:
+  name: {{ .Values.upstreamService.name }}
+  labels:
+    {{- include "agent-mesh-authz.labels" . | nindent 4 }}
+spec:
+  protocol: http
+
+---
+# ---------------------------------------------------------------------------
+# 2. ServiceDefaults for Auth Service: Registers protocol as HTTP
+# ---------------------------------------------------------------------------
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceDefaults
+metadata:
+  name: {{ .Values.authService.name }}
+  labels:
+    {{- include "agent-mesh-authz.labels" . | nindent 4 }}
+spec:
+  protocol: http
+
+---
+# ---------------------------------------------------------------------------
+# 3. ServiceDefaults for Tenant Agent: Injects Envoy ext_authz Extension
+# ---------------------------------------------------------------------------
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceDefaults
+metadata:
+  name: {{ .Values.tenantAgent.name }}
+  labels:
+    {{- include "agent-mesh-authz.labels" . | nindent 4 }}
+spec:
+  protocol: http
+  envoyExtensions:
+    - name: builtin/ext-authz
+      arguments:
+        type: {{ .Values.consulCRDs.extAuthz.type | quote }}
+        service:
+          name: {{ .Values.consulCRDs.extAuthz.authService | quote }}
+          port: {{ .Values.consulCRDs.extAuthz.authPort }}
+        path: {{ .Values.consulCRDs.extAuthz.path | quote }}
+        failureModeAllow: {{ .Values.consulCRDs.extAuthz.failureModeAllow }}
+        withRequestBody:
+          maxRequestBytes: {{ .Values.consulCRDs.extAuthz.maxRequestBytes }}
+          packAsBytes: false
+        allowedHeaders:
+          {{- toYaml .Values.consulCRDs.extAuthz.allowedHeaders | nindent 10 }}
+        allowedUpstreamHeaders:
+          {{- toYaml .Values.consulCRDs.extAuthz.allowedUpstreamHeaders | nindent 10 }}
+{{- end }}

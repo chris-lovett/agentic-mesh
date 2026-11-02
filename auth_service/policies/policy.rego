@@ -1,0 +1,84 @@
+package bofa.agent.authz
+
+import future.keywords.in
+import future.keywords.if
+
+default allow := false
+default reason := "Access denied by default policy"
+
+# -------------------------------------------------------------
+# Agent Entitlement Matrix
+# -------------------------------------------------------------
+agent_permissions := {
+    "agent-finance-analyst": {
+        "tenant": "tenant-finance",
+        "allowed_tools": ["mcp-internal-db", "mcp-fx-rates"],
+        "allowed_models": ["gpt-4o", "claude-3-5-sonnet", "llama-3-70b"],
+        "allow_external_egress": false
+    },
+    "agent-research-bot": {
+        "tenant": "tenant-research",
+        "allowed_tools": ["mcp-internal-db", "mcp-external-search"],
+        "allowed_models": ["gpt-4o", "claude-3-5-sonnet"],
+        "allow_external_egress": true
+    },
+    "agent-untrusted-sandbox": {
+        "tenant": "tenant-sandbox",
+        "allowed_tools": [],
+        "allowed_models": ["llama-3-8b"],
+        "allow_external_egress": false
+    }
+}
+
+# -------------------------------------------------------------
+# Policy Evaluation Rules
+# -------------------------------------------------------------
+
+# Rule 1: LLM Inference Path (/v1/chat/completions)
+allow if {
+    input.path == "/v1/chat/completions"
+    agent := agent_permissions[input.agent_id]
+    agent.tenant == input.tenant_id
+    input.model in agent.allowed_models
+}
+
+# Rule 2: Internal Platform Tools (/mcp/internal-*)
+allow if {
+    startswith(input.path, "/mcp/internal-")
+    agent := agent_permissions[input.agent_id]
+    agent.tenant == input.tenant_id
+    input.tool_name in agent.allowed_tools
+}
+
+# Rule 3: External Services & Tools (/mcp/external-*)
+allow if {
+    startswith(input.path, "/mcp/external-")
+    agent := agent_permissions[input.agent_id]
+    agent.tenant == input.tenant_id
+    agent.allow_external_egress == true
+    input.tool_name in agent.allowed_tools
+}
+
+# -------------------------------------------------------------
+# Diagnostic / Audit Reason
+# -------------------------------------------------------------
+reason := "Authorized" if {
+    allow
+} else := "Agent ID is unknown" if {
+    not agent_permissions[input.agent_id]
+} else := "Tenant ID mismatch" if {
+    agent := agent_permissions[input.agent_id]
+    agent.tenant != input.tenant_id
+} else := "Agent not entitled for this tool" if {
+    agent := agent_permissions[input.agent_id]
+    input.tool_name != ""
+    not input.tool_name in agent.allowed_tools
+} else := "Agent not entitled for external egress" if {
+    agent := agent_permissions[input.agent_id]
+    startswith(input.path, "/mcp/external-")
+    not agent.allow_external_egress
+} else := "Requested LLM model is not permitted for this agent" if {
+    agent := agent_permissions[input.agent_id]
+    input.path == "/v1/chat/completions"
+    not input.model in agent.allowed_models
+} else := "Destination path not recognized or unapproved"

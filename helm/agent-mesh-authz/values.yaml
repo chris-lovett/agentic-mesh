@@ -1,0 +1,122 @@
+# Global namespace and environment configuration
+global:
+  datacenter: dc1
+  domain: consul
+
+# ---------------------------------------------------------------------------
+# 1. FastAPI & OPA Authorization Service (Target for Envoy ext_authz)
+# ---------------------------------------------------------------------------
+authService:
+  enabled: true
+  name: auth-service
+  replicaCount: 2
+  
+  # Image configuration
+  image:
+    repository: python
+    tag: "3.11-slim"
+    pullPolicy: IfNotPresent
+  
+  opaImage:
+    repository: openpolicyagent/opa
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8000
+    opaPort: 8181
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Consul Connect Mesh Sidecar Injection
+  consul:
+    inject: true
+    serviceName: auth-service
+
+# ---------------------------------------------------------------------------
+# 2. Upstream Platform & External Mock Services (LLM Inference & MCP Tools)
+# ---------------------------------------------------------------------------
+upstreamService:
+  enabled: true
+  name: upstream-platform-service
+  replicaCount: 1
+
+  image:
+    repository: python
+    tag: "3.11-slim"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Consul Connect Mesh Sidecar Injection
+  consul:
+    inject: true
+    serviceName: upstream-platform-service
+
+# ---------------------------------------------------------------------------
+# 3. Tenant AI Agent Pod (Client with Injected Envoy Proxy)
+# ---------------------------------------------------------------------------
+tenantAgent:
+  enabled: true
+  name: tenant-agent-finance
+  agentId: "agent-finance-analyst"
+  tenantId: "tenant-finance"
+  replicaCount: 1
+
+  image:
+    repository: python
+    tag: "3.11-slim"
+    pullPolicy: IfNotPresent
+
+  # Consul Envoy Mesh Interception Configuration
+  consul:
+    inject: true
+    serviceName: tenant-agent-finance
+    # Upstream services registered in Consul Mesh that this agent connects to
+    upstreams:
+      - destinationName: upstream-platform-service
+        localBindPort: 8080
+
+# ---------------------------------------------------------------------------
+# 4. Consul CRDs (ServiceDefaults & ext_authz Envoy Extension)
+# ---------------------------------------------------------------------------
+consulCRDs:
+  enabled: true
+  
+  # Envoy ext_authz configuration
+  extAuthz:
+    type: http
+    authService: auth-service
+    authPort: 8000
+    path: /v1/auth/check
+    failureModeAllow: false
+    maxRequestBytes: 8192
+    allowedHeaders:
+      - authorization
+      - x-agent-id
+      - x-tenant-id
+      - x-tool-name
+      - x-model-name
+      - content-type
+    allowedUpstreamHeaders:
+      - x-authenticated-tenant
+      - x-authenticated-agent
+      - x-guardrail-verdict
+      - x-auth-reason

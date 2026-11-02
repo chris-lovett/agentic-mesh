@@ -1,0 +1,112 @@
+{{- if .Values.authService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-mesh-authz.fullname" . }}-auth-service
+  labels:
+    {{- include "agent-mesh-authz.labels" . | nindent 4 }}
+    app: {{ .Values.authService.name }}
+spec:
+  replicas: {{ .Values.authService.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.authService.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.authService.name }}
+      annotations:
+        {{- if .Values.authService.consul.inject }}
+        consul.hashicorp.com/connect-inject: "true"
+        consul.hashicorp.com/connect-service: "{{ .Values.authService.consul.serviceName }}"
+        consul.hashicorp.com/connect-service-port: "{{ .Values.authService.service.port }}"
+        {{- end }}
+    spec:
+      containers:
+        # 1. FastAPI Guardrail & OPA Orchestrator Container
+        - name: fastapi-guardrail
+          image: "{{ .Values.authService.image.repository }}:{{ .Values.authService.image.tag }}"
+          imagePullPolicy: {{ .Values.authService.image.pullPolicy }}
+          command:
+            - "sh"
+            - "-c"
+            - "pip install fastapi uvicorn[standard] httpx pydantic && uvicorn app.auth_main:app --host 0.0.0.0 --port 8000"
+          env:
+            - name: OPA_URL
+              value: "http://localhost:8181/v1/data/bofa/agent/authz"
+          ports:
+            - name: http
+              containerPort: {{ .Values.authService.service.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: app-code
+              mountPath: /app
+          resources:
+            {{- toYaml .Values.authService.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+        # 2. Open Policy Agent (OPA) In-Pod Engine Container
+        - name: opa-engine
+          image: "{{ .Values.authService.opaImage.repository }}:{{ .Values.authService.opaImage.tag }}"
+          imagePullPolicy: {{ .Values.authService.opaImage.pullPolicy }}
+          args:
+            - "run"
+            - "--server"
+            - "--addr=0.0.0.0:8181"
+            - "--log-level=info"
+            - "/policies/policy.rego"
+          ports:
+            - name: opa
+              containerPort: {{ .Values.authService.service.opaPort }}
+              protocol: TCP
+          volumeMounts:
+            - name: opa-policy
+              mountPath: /policies
+          resources:
+            limits:
+              cpu: 250m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: opa
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+      volumes:
+        - name: app-code
+          configMap:
+            name: {{ include "agent-mesh-authz.fullname" . }}-code
+        - name: opa-policy
+          configMap:
+            name: {{ include "agent-mesh-authz.fullname" . }}-opa-policy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.authService.name }}
+  labels:
+    {{- include "agent-mesh-authz.labels" . | nindent 4 }}
+    app: {{ .Values.authService.name }}
+spec:
+  type: {{ .Values.authService.service.type }}
+  ports:
+    - port: {{ .Values.authService.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.authService.service.opaPort }}
+      targetPort: opa
+      protocol: TCP
+      name: opa
+  selector:
+    app: {{ .Values.authService.name }}
+{{- end }}

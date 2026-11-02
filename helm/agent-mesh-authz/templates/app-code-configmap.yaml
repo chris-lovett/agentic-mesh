@@ -1,0 +1,156 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agent-mesh-authz.fullname" . }}-code
+  labels:
+    {{- include "agent-mesh-authz.labels" . | nindent 4 }}
+data:
+  auth_main.py: |
+    import os
+    import re
+    import json
+    import logging
+    import httpx
+    from typing import Optional, Dict, Any, List
+    from fastapi import FastAPI, Request, Response, status
+    from fastapi.responses import JSONResponse
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    logger = logging.getLogger("auth-service")
+
+    app = FastAPI(title="AI Agent Auth & Guardrail Service")
+    OPA_URL = os.getenv("OPA_URL", "http://localhost:8181/v1/data/bofa/agent/authz")
+
+    PII_PATTERNS = {
+        "SSN": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+        "CREDIT_CARD": re.compile(r"\b(?:\d{4}[ -]?){3}\d{4}\b"),
+        "API_SECRET_KEY": re.compile(r"\b(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,})\b"),
+    }
+    PROMPT_INJECTION_KEYWORDS = [
+        "ignore all previous instructions",
+        "system prompt override",
+        "bypass safety filters",
+    ]
+
+    def evaluate_guardrails(content: str) -> Dict[str, Any]:
+        if not content:
+            return {"passed": True, "violations": []}
+        violations = []
+        content_lower = content.lower()
+        for pii_type, pattern in PII_PATTERNS.items():
+            if pattern.search(content):
+                violations.append(f"PII Leakage: {pii_type}")
+        for kw in PROMPT_INJECTION_KEYWORDS:
+            if kw in content_lower:
+                violations.append(f"Prompt Injection: '{kw}'")
+        return {"passed": len(violations) == 0, "violations": violations}
+
+    @app.api_route("/v1/auth/check", methods=["GET", "POST", "PUT", "DELETE"])
+    async def envoy_ext_authz_check(request: Request):
+        headers = request.headers
+        original_uri = headers.get("x-original-uri") or headers.get("x-envoy-original-path") or request.url.path
+        original_method = headers.get("x-original-method", request.method)
+        agent_id = headers.get("x-agent-id", "agent-untrusted-sandbox")
+        tenant_id = headers.get("x-tenant-id", "tenant-sandbox")
+        tool_name = headers.get("x-tool-name", "")
+        model_name = headers.get("x-model-name", "gpt-4o")
+
+        body_text = ""
+        try:
+            raw_body = await request.body()
+            if raw_body:
+                body_text = raw_body.decode("utf-8", errors="ignore")
+                try:
+                    body_json = json.loads(body_text)
+                    if isinstance(body_json, dict):
+                        if "model" in body_json:
+                            model_name = body_json["model"]
+                        if "tool" in body_json:
+                            tool_name = body_json["tool"]
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Could not read body: {e}")
+
+        # 1. Guardrail Check
+        gr = evaluate_guardrails(body_text)
+        if not gr["passed"]:
+            v_str = "; ".join(gr["violations"])
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                headers={"x-auth-decision": "denied", "x-auth-reason": v_str},
+                content={"error": "Security Guardrail Violation", "violations": gr["violations"]},
+            )
+
+        # 2. OPA Policy Check
+        opa_input = {
+            "agent_id": agent_id,
+            "tenant_id": tenant_id,
+            "path": original_uri,
+            "method": original_method,
+            "tool_name": tool_name,
+            "model": model_name,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=1.5) as client:
+                resp = await client.post(OPA_URL, json={"input": opa_input})
+                res = resp.json().get("result", {})
+                allow = res.get("allow", False)
+                reason = res.get("reason", "OPA Evaluation")
+        except Exception as exc:
+            logger.error(f"OPA error: {exc}")
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"error": "OPA policy engine unavailable"},
+            )
+
+        if not allow:
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                headers={"x-auth-decision": "denied", "x-auth-reason": reason},
+                content={"error": "Policy Authorization Denied", "reason": reason},
+            )
+
+        return Response(
+            status_code=status.HTTP_200_OK,
+            headers={
+                "x-auth-decision": "allowed",
+                "x-authenticated-tenant": tenant_id,
+                "x-authenticated-agent": agent_id,
+                "x-guardrail-verdict": "pass",
+            },
+        )
+
+    @app.get("/healthz")
+    async def health():
+        return {"status": "healthy"}
+
+  upstream_main.py: |
+    from fastapi import FastAPI, Request
+    from pydantic import BaseModel
+    from typing import List
+
+    app = FastAPI(title="Upstream Mock Services")
+
+    @app.post("/v1/chat/completions")
+    async def completions(request: Request):
+        agent = request.headers.get("x-authenticated-agent", "unknown")
+        tenant = request.headers.get("x-authenticated-tenant", "unknown")
+        body = await request.json()
+        return {
+            "id": "chatcmpl-mock-12345",
+            "model": body.get("model", "gpt-4o"),
+            "choices": [{"message": {"role": "assistant", "content": f"Completed for {agent} ({tenant})"}}],
+        }
+
+    @app.post("/mcp/internal-db")
+    async def db_tool(request: Request):
+        return {"tool": "mcp-internal-db", "status": "success", "result": [{"balance": 1500000}]}
+
+    @app.post("/mcp/external-search")
+    async def search_tool(request: Request):
+        return {"tool": "mcp-external-search", "status": "success", "results": [{"title": "Market Trends"}]}
+
+    @app.get("/healthz")
+    async def health():
+        return {"status": "healthy"}
