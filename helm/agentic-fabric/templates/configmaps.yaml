@@ -1,0 +1,213 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentic-providers-code
+data:
+  main.py: |
+    from fastapi import FastAPI, Request, Header, HTTPException, status
+    from pydantic import BaseModel
+    from typing import List, Optional
+    import time
+
+    app = FastAPI(title="Multi-Provider LLM & MCP Mock Backends", version="2.1.0")
+
+    class ChatMessage(BaseModel):
+        role: str
+        content: str
+
+    class ChatCompletionRequest(BaseModel):
+        model: str
+        messages: List[ChatMessage]
+
+    token_usage_ledger = {"tenant-finance": 0, "tenant-research": 0, "global": 0}
+
+    @app.post("/openai/v1/chat/completions")
+    async def openai_completions(req: ChatCompletionRequest, request: Request):
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or invalid injected provider API key",
+            )
+        
+        tenant = request.headers.get("x-tenant-id", "unknown-tenant")
+        prompt_tokens = sum(len(m.content.split()) for m in req.messages) * 2
+        completion_tokens = 15
+        total_tokens = prompt_tokens + completion_tokens
+
+        token_usage_ledger[tenant] = token_usage_ledger.get(tenant, 0) + total_tokens
+        token_usage_ledger["global"] += total_tokens
+
+        return {
+            "id": "chatcmpl-openai-mock",
+            "provider": "openai",
+            "model": req.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": f"[OpenAI Provider Response via Consul Agentic Mesh] Processed for {tenant}.",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            },
+            "headers_inspected": {
+                "x-tenant-id": tenant,
+                "has_injected_api_key": True,
+            },
+        }
+
+    @app.post("/anthropic/v1/messages")
+    async def anthropic_completions(request: Request):
+        body = await request.json()
+        tenant = request.headers.get("x-tenant-id", "unknown-tenant")
+        
+        return {
+            "id": "msg-anthropic-mock",
+            "provider": "anthropic",
+            "model": body.get("model", "claude-3-5-sonnet"),
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"[Anthropic Fallback Provider Response] Responded seamlessly for {tenant}.",
+                }
+            ],
+            "usage": {"input_tokens": 20, "output_tokens": 15},
+        }
+
+    @app.post("/mcp/internal-db")
+    async def mcp_internal_db(request: Request):
+        body = await request.json()
+        tenant = request.headers.get("x-tenant-id", "unknown-tenant")
+        return {
+            "mcp_server": "internal-db-service",
+            "status": "success",
+            "data": [{"account_id": "ACC-8801", "balance": 950000.0, "tenant": tenant}],
+        }
+
+    @app.get("/metrics/tokens")
+    async def get_token_metrics():
+        return {"token_usage_ledger": token_usage_ledger}
+
+    @app.get("/healthz")
+    async def health():
+        return {"status": "healthy", "service": "agentic-provider-mock"}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentic-gateway-config
+data:
+  envoy.yaml: |
+    admin:
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9902
+
+    static_resources:
+      listeners:
+      - name: agentic_gateway_listener
+        address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 10001
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: agentic_fabric
+              codec_type: AUTO
+              route_config:
+                name: agentic_routes
+                virtual_hosts:
+                - name: agentic_vhost
+                  domains: ["*"]
+                  routes:
+                  - match:
+                      prefix: "/v1/chat/completions"
+                    route:
+                      cluster: openai_provider
+                      prefix_rewrite: "/openai/v1/chat/completions"
+                      timeout: 15s
+                      retry_policy:
+                        retry_on: "5xx,connect-failure,reset"
+                        num_retries: 2
+                    request_headers_to_add:
+                      - header:
+                          key: "Authorization"
+                          value: "Bearer sk-proj-consul-agentic-vault-managed-key-99281"
+                        append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                      - header:
+                          key: "x-consul-mesh-tier"
+                          value: "agentic-runtime-fabric-2.1"
+                        append_action: OVERWRITE_IF_EXISTS_OR_ADD
+
+                  - match:
+                      prefix: "/v1/messages"
+                    route:
+                      cluster: openai_provider
+                      prefix_rewrite: "/anthropic/v1/messages"
+                      timeout: 15s
+                    request_headers_to_add:
+                      - header:
+                          key: "Authorization"
+                          value: "Bearer ant-api-consul-agentic-key-10293"
+                        append_action: OVERWRITE_IF_EXISTS_OR_ADD
+
+                  - match:
+                      prefix: "/mcp/internal-db"
+                    route:
+                      cluster: openai_provider
+                      prefix_rewrite: "/mcp/internal-db"
+                      timeout: 10s
+
+              http_filters:
+              - name: envoy.filters.http.local_ratelimit
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                  stat_prefix: agentic_tpm_rpm_limiter
+                  token_bucket:
+                    max_tokens: 50
+                    tokens_per_fill: 50
+                    fill_interval: 1s
+                  filter_enabled:
+                    default_value:
+                      numerator: 100
+                      denominator: HUNDRED
+                  filter_enforced:
+                    default_value:
+                      numerator: 100
+                      denominator: HUNDRED
+                  response_headers_to_add:
+                    - header:
+                        key: "x-ratelimit-enforced-by"
+                        value: "consul-2.1-agentic-mesh"
+                      append_action: OVERWRITE_IF_EXISTS_OR_ADD
+
+              - name: envoy.filters.http.router
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+      clusters:
+      - name: openai_provider
+        connect_timeout: 0.50s
+        type: STRICT_DNS
+        lb_policy: ROUND_ROBIN
+        load_assignment:
+          cluster_name: openai_provider
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: agentic-providers
+                    port_value: 8085

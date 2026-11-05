@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.providers.name }}
+  labels:
+    app: {{ .Values.providers.name }}
+spec:
+  replicas: {{ .Values.providers.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.providers.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.providers.name }}
+      annotations:
+        consul.hashicorp.com/connect-inject: "true"
+        consul.hashicorp.com/connect-service: "{{ .Values.providers.name }}"
+        consul.hashicorp.com/connect-service-port: "{{ .Values.providers.port }}"
+    spec:
+      serviceAccountName: {{ .Values.providers.name }}
+      containers:
+        - name: providers
+          image: "{{ .Values.providers.image }}"
+          command:
+            - "sh"
+            - "-c"
+            - "pip install fastapi uvicorn[standard] pydantic httpx && uvicorn app.main:app --host 0.0.0.0 --port 8085"
+          ports:
+            - name: http
+              containerPort: {{ .Values.providers.port }}
+          volumeMounts:
+            - name: app-code
+              mountPath: /app
+          resources:
+            {{- toYaml .Values.providers.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: app-code
+          configMap:
+            name: agentic-providers-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.providers.name }}
+  labels:
+    app: {{ .Values.providers.name }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.providers.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: {{ .Values.providers.name }}

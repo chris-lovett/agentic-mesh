@@ -1,0 +1,44 @@
+global:
+  datacenter: dc1
+  domain: consul
+
+gateway:
+  name: ai-agentic-gateway
+  image: "docker.io/envoyproxy/envoy:v1.31.0"
+  port: 10001
+  adminPort: 9902
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+providers:
+  name: agentic-providers
+  image: "docker.io/library/python:3.11-slim"
+  port: 8085
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+tenantAgent:
+  name: tenant-agent-b
+  agentId: "agent-researcher-01"
+  tenantId: "tenant-research"
+  image: "docker.io/library/python:3.11-slim"
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi

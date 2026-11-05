@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.tenantAgent.name }}
+  labels:
+    app: {{ .Values.tenantAgent.name }}
+spec:
+  replicas: {{ .Values.tenantAgent.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.tenantAgent.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.tenantAgent.name }}
+      annotations:
+        consul.hashicorp.com/connect-inject: "true"
+        consul.hashicorp.com/connect-service: "{{ .Values.tenantAgent.name }}"
+        consul.hashicorp.com/connect-service-upstreams: "{{ .Values.gateway.name }}:10001"
+    spec:
+      serviceAccountName: {{ .Values.tenantAgent.name }}
+      containers:
+        - name: agent-runtime
+          image: "{{ .Values.tenantAgent.image }}"
+          command:
+            - "sh"
+            - "-c"
+            - "pip install httpx && python -c 'import time; print(\"Tenant Agent B running on Agentic Fabric...\"); time.sleep(3600)'"
+          env:
+            - name: AGENT_ID
+              value: "{{ .Values.tenantAgent.agentId }}"
+            - name: TENANT_ID
+              value: "{{ .Values.tenantAgent.tenantId }}"
+            - name: AGENTIC_GATEWAY_URL
+              value: "http://localhost:10001"
+          resources:
+            {{- toYaml .Values.tenantAgent.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.tenantAgent.name }}
+  labels:
+    app: {{ .Values.tenantAgent.name }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: {{ .Values.tenantAgent.name }}

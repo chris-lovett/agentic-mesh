@@ -1,0 +1,31 @@
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceDefaults
+metadata:
+  name: {{ .Values.gateway.name }}
+spec:
+  protocol: http
+---
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceDefaults
+metadata:
+  name: {{ .Values.providers.name }}
+spec:
+  protocol: http
+---
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceDefaults
+metadata:
+  name: {{ .Values.tenantAgent.name }}
+spec:
+  protocol: http
+---
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceIntentions
+metadata:
+  name: allow-agentic-mesh-traffic
+spec:
+  destination:
+    name: '*'
+  sources:
+    - name: '*'
+      action: allow

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agentic-fabric
+description: Consul 2.1 Agentic Runtime Fabric with Native AI Gateway, Vault Secret Injection, Rate Limiting, and MCP Tool Discovery
+type: application
+version: 2.1.0
+appVersion: "2.1.0"

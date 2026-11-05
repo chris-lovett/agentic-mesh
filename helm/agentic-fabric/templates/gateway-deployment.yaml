@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.gateway.name }}
+  labels:
+    app: {{ .Values.gateway.name }}
+spec:
+  replicas: {{ .Values.gateway.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.gateway.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.gateway.name }}
+      annotations:
+        consul.hashicorp.com/connect-inject: "true"
+        consul.hashicorp.com/connect-service: "{{ .Values.gateway.name }}"
+        consul.hashicorp.com/connect-service-port: "{{ .Values.gateway.port }}"
+    spec:
+      serviceAccountName: {{ .Values.gateway.name }}
+      containers:
+        - name: ai-gateway
+          image: "{{ .Values.gateway.image }}"
+          command:
+            - "envoy"
+          args:
+            - "-c"
+            - "/etc/envoy/envoy.yaml"
+            - "--log-level"
+            - "info"
+          ports:
+            - name: gateway
+              containerPort: {{ .Values.gateway.port }}
+            - name: admin
+              containerPort: {{ .Values.gateway.adminPort }}
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+      volumes:
+        - name: envoy-config
+          configMap:
+            name: agentic-gateway-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.gateway.name }}
+  labels:
+    app: {{ .Values.gateway.name }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.gateway.port }}
+      targetPort: gateway
+      protocol: TCP
+      name: gateway
+    - port: {{ .Values.gateway.adminPort }}
+      targetPort: admin
+      protocol: TCP
+      name: admin
+  selector:
+    app: {{ .Values.gateway.name }}
