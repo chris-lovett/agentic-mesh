@@ -1,0 +1,85 @@
+# ===========================================================================
+# HashiCorp Consul 2.1 Enterprise on OpenShift (ROSA 4.22)
+# Configured for OpenShift Service Mesh, Agentic Fabric & non-root SCCs
+# ===========================================================================
+
+global:
+  name: consul
+  datacenter: dc1
+  image: "hashicorp/consul-enterprise:1.22.3-ent" # or consul:2.1-ent / hashicorp/consul-k8s-control-plane:1.6.x
+  enterpriseLicense:
+    secretName: consul-ent-license
+    secretKey: key
+
+  # OpenShift SecurityContext: Must allow OpenShift assigned UIDs / anyuid
+  openshift:
+    enabled: true
+
+  # Enable full TLS encryption across the mesh
+  tls:
+    enabled: true
+    enableAutoEncrypt: true
+
+  # Enable Access Control Lists (ACLs)
+  acls:
+    manageSystemACLs: true
+
+  # Enable Metrics / OpenTelemetry for AI token tracking
+  metrics:
+    enabled: true
+    enableAgentMetrics: true
+
+# ---------------------------------------------------------------------------
+# Server Control Plane (3-node HA deployment on OpenShift)
+# ---------------------------------------------------------------------------
+server:
+  replicas: 3
+  bootstrapExpect: 3
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  storage: "10Gi"
+  storageClass: "gp3-csi" # AWS EBS CSI storage class on ROSA
+
+# ---------------------------------------------------------------------------
+# Consul Connect Service Mesh (Envoy sidecar injector)
+# ---------------------------------------------------------------------------
+connectInject:
+  enabled: true
+  transparentProxy:
+    defaultEnabled: true
+
+  # Default resource sizing for injected Envoy proxies
+  sidecarProxy:
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "250m"
+
+# ---------------------------------------------------------------------------
+# Consul UI
+# ---------------------------------------------------------------------------
+ui:
+  enabled: true
+  service:
+    type: ClusterIP
+
+# ---------------------------------------------------------------------------
+# Consul Controller (CRD Reconciliation for ServiceDefaults, ServiceRoute)
+# ---------------------------------------------------------------------------
+controller:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# OpenShift DNS integration
+# ---------------------------------------------------------------------------
+dns:
+  enabled: true
+  clusterIP: "172.30.200.53" # Static clusterIP for OpenShift DNS operator reconciliation

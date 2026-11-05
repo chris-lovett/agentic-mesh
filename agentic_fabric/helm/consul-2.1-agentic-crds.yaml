@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# Consul 2.1 Agentic Runtime Fabric Configuration Entries (CRDs)
+# ---------------------------------------------------------------------------
+
+# 1. AI Gateway ServiceDefaults: Configures Unified LLM Gateway with Native Token Limiting
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceDefaults
+metadata:
+  name: ai-agentic-gateway
+  namespace: platform-ai
+spec:
+  protocol: http
+  # Native AI Gateway Rate Limiting & Header Management
+  envoyExtensions:
+    - name: builtin/local-ratelimit
+      arguments:
+        statPrefix: ai_gateway_tpm_limiter
+        tokenBucket:
+          maxTokens: 1000
+          tokensPerFill: 1000
+          fillInterval: 60s # 1,000 Requests/Tokens per minute
+
+---
+# 2. ServiceRoute for Multi-Provider AI Routing (OpenAI primary, Anthropic fallback)
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceRoute
+metadata:
+  name: llm-inference-router
+  namespace: platform-ai
+spec:
+  destination:
+    name: ai-agentic-gateway
+  routes:
+    # Route A: Model gpt-4o -> OpenAI Upstream with Vault Secret Injection
+    - match:
+        http:
+          pathExact: /v1/chat/completions
+          header:
+            - name: x-model-family
+              exact: openai
+      destination:
+        service: openai-provider-backend
+        requestHeaders:
+          set:
+            Authorization: "Bearer vault:secret/data/ai/openai#api_key"
+            x-routed-by: "consul-2.1-agentic-mesh"
+    
+    # Route B: Model claude-3-5 -> Anthropic Upstream
+    - match:
+        http:
+          pathExact: /v1/chat/completions
+          header:
+            - name: x-model-family
+              exact: anthropic
+      destination:
+        service: anthropic-provider-backend
+        requestHeaders:
+          set:
+            Authorization: "Bearer vault:secret/data/ai/anthropic#api_key"
+
+---
+# 3. ServiceDefaults for MCP Tool Discovery
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceDefaults
+metadata:
+  name: mcp-tool-discovery
+  namespace: platform-ai
+spec:
+  protocol: http
+  # Native Discovery for Model Context Protocol tools across namespaces
