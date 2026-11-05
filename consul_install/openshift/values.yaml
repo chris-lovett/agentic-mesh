@@ -9,6 +9,7 @@ global:
   installK8sNetworkingCRDs: false
   image: "docker.io/hashicorp/consul-enterprise:2.1.0-ent"
   imageK8S: "docker.io/hashicorp/consul-k8s-control-plane:2.1.0"
+  imageConsulDataplane: "docker.io/hashicorp/consul-dataplane:2.1.0"
   enterpriseLicense:
     secretName: consul-ent-license
     secretKey: key

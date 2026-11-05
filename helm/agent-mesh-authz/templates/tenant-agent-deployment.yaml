@@ -25,6 +25,7 @@ spec:
         consul.hashicorp.com/connect-service-upstreams: "{{ .Values.upstreamService.name }}:8080"
         {{- end }}
     spec:
+      serviceAccountName: tenant-agent-finance
       containers:
         # AI Agent Runtime Container
         - name: agent-runtime
@@ -48,4 +49,21 @@ spec:
             requests:
               cpu: 100m
               memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.tenantAgent.name }}
+  labels:
+    {{- include "agent-mesh-authz.labels" . | nindent 4 }}
+    app: {{ .Values.tenantAgent.name }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: {{ .Values.tenantAgent.name }}
 {{- end }}

@@ -22,6 +22,7 @@ spec:
         consul.hashicorp.com/connect-service-port: "{{ .Values.upstreamService.service.port }}"
         {{- end }}
     spec:
+      serviceAccountName: upstream-platform-service
       containers:
         - name: upstream-platform
           image: "{{ .Values.upstreamService.image.repository }}:{{ .Values.upstreamService.image.tag }}"

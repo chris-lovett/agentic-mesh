@@ -22,6 +22,7 @@ spec:
         consul.hashicorp.com/connect-service-port: "{{ .Values.authService.service.port }}"
         {{- end }}
     spec:
+      serviceAccountName: auth-service
       containers:
         # 1. FastAPI Guardrail & OPA Orchestrator Container
         - name: fastapi-guardrail
