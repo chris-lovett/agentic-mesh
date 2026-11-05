@@ -6,7 +6,9 @@
 global:
   name: consul
   datacenter: dc1
-  image: "hashicorp/consul-enterprise:1.22.3-ent" # or consul:2.1-ent / hashicorp/consul-k8s-control-plane:1.6.x
+  installK8sNetworkingCRDs: false
+  image: "docker.io/hashicorp/consul-enterprise:2.1.0-ent"
+  imageK8S: "docker.io/hashicorp/consul-k8s-control-plane:2.1.0"
   enterpriseLicense:
     secretName: consul-ent-license
     secretKey: key
@@ -30,11 +32,11 @@ global:
     enableAgentMetrics: true
 
 # ---------------------------------------------------------------------------
-# Server Control Plane (3-node HA deployment on OpenShift)
+# Server Control Plane (1 replica for fast 2-node ROSA worker topology)
 # ---------------------------------------------------------------------------
 server:
-  replicas: 3
-  bootstrapExpect: 3
+  replicas: 1
+  bootstrapExpect: 1
   resources:
     requests:
       memory: "512Mi"
@@ -52,6 +54,9 @@ connectInject:
   enabled: true
   transparentProxy:
     defaultEnabled: true
+  apiGateway:
+    manageExternalCRDs: false
+    manageNonStandardCRDs: false
 
   # Default resource sizing for injected Envoy proxies
   sidecarProxy:
@@ -82,4 +87,6 @@ controller:
 # ---------------------------------------------------------------------------
 dns:
   enabled: true
-  clusterIP: "172.30.200.53" # Static clusterIP for OpenShift DNS operator reconciliation
+
+ai:
+  enabled: false

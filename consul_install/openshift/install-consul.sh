@@ -39,7 +39,8 @@ helm repo update
 echo "Installing Consul control plane via Helm..."
 helm upgrade --install consul hashicorp/consul \
   --namespace consul \
-  --values values.yaml
+  --values values.yaml \
+  --skip-crds
 
 echo "=========================================================="
 echo "Consul installation initiated! Track rollout with:"
